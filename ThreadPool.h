@@ -46,8 +46,15 @@ public:
      */
     template<class T>
     void submitTask(T&& task) {
-        tasks_.emplace(std::forward<T>(task));
-
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            tasks_.emplace(std::forward<T>(task));
+        }
+        condition_.notify_one();
+        if (should_add_worker()) {
+            ///< 添加临时线程
+            try_add_worker();
+        }
     }
 
     /**
@@ -81,6 +88,10 @@ public:
 
         // 通知一个工作线程
         condition_.notify_one();
+
+        if (should_add_worker()) {
+            try_add_worker();
+        }
 
         return future;
     }
@@ -151,7 +162,7 @@ private:
     // 接受无参数无返回值的函数指针
 
     ///< 原语操作
-    std::mutex queue_mutex_;
+    mutable std::mutex queue_mutex_;
     ///< 队列为空时阻塞工作线程，待有任务时唤醒工作
     std::condition_variable condition_;
     ///< 队列满时阻塞生产者

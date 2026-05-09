@@ -60,6 +60,7 @@ size_t ThreadPool::max_thread_count() const {
 }
 
 size_t ThreadPool::pendingTasks() const {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
     return tasks_.size();
 }
 
@@ -95,16 +96,20 @@ void ThreadPool::worker_thread(bool is_core) {
 }
 
 void ThreadPool::try_add_worker() {
-    //TODO:当任务队列堆积，核心线程无法处理时对线程池进行扩容，在此之前先判断是否需要添加线程
-    if (active_thread_count_<config_.max_threads_&&!tasks_.empty()) {
-        std::thread t(&ThreadPool::worker_thread, this, false);
-        t.detach();
-        active_thread_count_.fetch_add(1);
-    }
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    threads_.emplace_back(&ThreadPool::worker_thread, this, false);
+    active_thread_count_.fetch_add(1);
 }
 
 
 bool ThreadPool::should_add_worker() {
+    if (stop_.load()) return false;
+    if (active_thread_count_>=config_.max_threads_) return false;
+    {
+        std::lock_guard<std::mutex> queue_lock(queue_mutex_);
+        if (!tasks_.empty()) return true;
+    }
+
     return false;
 }
 
