@@ -4,6 +4,7 @@
 #include<vector>
 #include<future>
 #include<queue>
+#include<iostream>
 
 /**
  * @brief 线程池配置，先填写预期中的模式以及参数再启动线程池。
@@ -124,6 +125,7 @@ private:
 
     ///< 任务队列
     std::queue<std::function<void()>> tasks_;
+    // 接受无参数无返回值的函数指针
 
     ///< 原语操作
     std::mutex queue_mutex_;
@@ -133,5 +135,5 @@ private:
     std::condition_variable queue_condition_;
 
     ///< 状态管理
-    std::atomic<bool> stop_;
+    std::atomic<bool> stop_{false};
 };
