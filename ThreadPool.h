@@ -5,6 +5,7 @@
 #include<future>
 #include<queue>
 #include<iostream>
+#include<functional>
 
 /**
  * @brief 线程池配置，先填写预期中的模式以及参数再启动线程池。
@@ -45,6 +46,7 @@ public:
      */
     template<class T>
     void submitTask(T&& task) {
+        tasks_.emplace(std::forward<T>(task));
 
     }
 
@@ -57,9 +59,30 @@ public:
      * @return
      */
     template<class F, class... Args>
-    auto submit_with_result(F&& f, Args&&... args)
-    -> std::future<decltype(f(args...))> {
+      auto submit_with_result(F&& f, Args&&... args)
+      -> std::future<decltype(f(args...))> {
+        using ReturnType = decltype(f(args...));
 
+        // 将函数和参数打包成 shared_ptr<packaged_task>
+        auto task = std::make_shared<std::packaged_task<ReturnType()>>(
+            std::bind(std::forward<F>(f), std::forward<Args>(args)...)
+        );
+
+        // 获取 future 用于返回结果
+        std::future<ReturnType> future = task->get_future();
+
+        // 加锁，将任务包装成 void() 放入队列
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            tasks_.emplace([task]() {
+                (*task)();
+            });
+        }
+
+        // 通知一个工作线程
+        condition_.notify_one();
+
+        return future;
     }
 
     /**
