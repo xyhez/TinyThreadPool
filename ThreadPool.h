@@ -1,3 +1,4 @@
+#pragma once
 #include<thread>                // C++线程标准库
 #include<condition_variable>    // C++条件变量标准库
 #include<vector>
@@ -37,23 +38,14 @@ public:
     ~ThreadPool();
 
     /**
-     * @brief 线程池初始化，准备资源
-     * @return  0-线程池启动成功;1-线程池启动失败
-     */
-    bool start();
-    /**
-     * @brief 线程池停止，回收资源
-     * @return 0-停止成功;1-线程池停止失败
-     */
-    bool stop();
-
-    /**
      * @brief 提交任务，无返回值
      * @tparam T
      * @param task
      */
     template<class T>
-    void submitTask(T&& task);
+    void submitTask(T&& task) {
+
+    }
 
     /**
      * @brief 提交任务，有返回值
@@ -65,7 +57,9 @@ public:
      */
     template<class F, class... Args>
     auto submit_with_result(F&& f, Args&&... args)
-    -> std::future<decltype(f(args...))>;
+    -> std::future<decltype(f(args...))> {
+
+    }
 
     /**
      * @brief 优雅的关闭，等待任务完成
@@ -82,6 +76,12 @@ public:
      * @return
      */
     size_t active_thread() const;
+
+    /**
+     * @brief 最大线程数
+     * @return
+     */
+    size_t max_thread_count() const;
 
     /**
      * @brief 待执行任务数
