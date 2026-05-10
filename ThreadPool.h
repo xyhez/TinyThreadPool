@@ -1,8 +1,11 @@
+#pragma once
 #include<thread>                // C++线程标准库
 #include<condition_variable>    // C++条件变量标准库
 #include<vector>
 #include<future>
 #include<queue>
+#include<iostream>
+#include<functional>
 
 /**
  * @brief 线程池配置，先填写预期中的模式以及参数再启动线程池。
@@ -37,23 +40,22 @@ public:
     ~ThreadPool();
 
     /**
-     * @brief 线程池初始化，准备资源
-     * @return  0-线程池启动成功;1-线程池启动失败
-     */
-    bool start();
-    /**
-     * @brief 线程池停止，回收资源
-     * @return 0-停止成功;1-线程池停止失败
-     */
-    bool stop();
-
-    /**
      * @brief 提交任务，无返回值
      * @tparam T
      * @param task
      */
     template<class T>
-    void submitTask(T&& task);
+    void submitTask(T&& task) {
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            tasks_.emplace(std::forward<T>(task));
+        }
+        condition_.notify_one();
+        if (should_add_worker()) {
+            ///< 添加临时线程
+            try_add_worker();
+        }
+    }
 
     /**
      * @brief 提交任务，有返回值
@@ -64,8 +66,35 @@ public:
      * @return
      */
     template<class F, class... Args>
-    auto submit_with_result(F&& f, Args&&... args)
-    -> std::future<decltype(f(args...))>;
+      auto submit_with_result(F&& f, Args&&... args)
+      -> std::future<decltype(f(args...))> {
+        using ReturnType = decltype(f(args...));
+
+        // 将函数和参数打包成 shared_ptr<packaged_task>
+        auto task = std::make_shared<std::packaged_task<ReturnType()>>(
+            std::bind(std::forward<F>(f), std::forward<Args>(args)...)
+        );
+
+        // 获取 future 用于返回结果
+        std::future<ReturnType> future = task->get_future();
+
+        // 加锁，将任务包装成 void() 放入队列
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            tasks_.emplace([task]() {
+                (*task)();
+            });
+        }
+
+        // 通知一个工作线程
+        condition_.notify_one();
+
+        if (should_add_worker()) {
+            try_add_worker();
+        }
+
+        return future;
+    }
 
     /**
      * @brief 优雅的关闭，等待任务完成
@@ -82,6 +111,12 @@ public:
      * @return
      */
     size_t active_thread() const;
+
+    /**
+     * @brief 最大线程数
+     * @return
+     */
+    size_t max_thread_count() const;
 
     /**
      * @brief 待执行任务数
@@ -124,14 +159,15 @@ private:
 
     ///< 任务队列
     std::queue<std::function<void()>> tasks_;
+    // 接受无参数无返回值的函数指针
 
     ///< 原语操作
-    std::mutex queue_mutex_;
+    mutable std::mutex queue_mutex_;
     ///< 队列为空时阻塞工作线程，待有任务时唤醒工作
     std::condition_variable condition_;
     ///< 队列满时阻塞生产者
     std::condition_variable queue_condition_;
 
     ///< 状态管理
-    std::atomic<bool> stop_;
+    std::atomic<bool> stop_{false};
 };
