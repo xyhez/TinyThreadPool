@@ -11,7 +11,7 @@ ThreadPool::ThreadPool(const ThreadPoolConfig& config) :config_(config), active_
 ThreadPool::ThreadPool(size_t threads) : active_thread_count_(threads){
     config_.max_threads_ = threads;
     for (int i = 0; i < config_.max_threads_; ++i) {
-        threads_.emplace_back(std::thread(&ThreadPool::worker_thread, this, false));
+        threads_.emplace_back(std::thread(&ThreadPool::worker_thread, this, true));
     }
 }
 
@@ -92,6 +92,7 @@ void ThreadPool::worker_thread(bool is_core) {
         tasks_.pop();
         lock.unlock();
         task();  // 执行任务
+        queue_condition_.notify_one();
     }
 }
 

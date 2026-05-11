@@ -48,13 +48,19 @@ public:
     void submitTask(T&& task) {
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
+            while(true) {
+                queue_condition_.wait(lock, [this](){
+                   return tasks_.size()<config_.max_queue_size_ || stop_;
+                });
+                break;
+            }
             tasks_.emplace(std::forward<T>(task));
         }
-        condition_.notify_one();
         if (should_add_worker()) {
             ///< 添加临时线程
             try_add_worker();
         }
+        condition_.notify_one();
     }
 
     /**
@@ -85,14 +91,11 @@ public:
                 (*task)();
             });
         }
-
-        // 通知一个工作线程
-        condition_.notify_one();
-
         if (should_add_worker()) {
             try_add_worker();
         }
-
+        // 通知一个工作线程
+        condition_.notify_one();
         return future;
     }
 
@@ -158,8 +161,8 @@ private:
     std::atomic<size_t> active_thread_count_;
 
     ///< 任务队列
-    std::queue<std::function<void()>> tasks_;
-    // 接受无参数无返回值的函数指针
+    std::queue<std::function<void()>> tasks_; // 接受无参数无返回值的函数指针
+
 
     ///< 原语操作
     mutable std::mutex queue_mutex_;
