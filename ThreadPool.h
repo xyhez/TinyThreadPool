@@ -150,7 +150,7 @@ private:
      * @brief 判断是否需要增加线程
      * @return
      */
-    bool should_add_worker();
+    bool should_add_worker() const;
 private:
     ///< 配置
     ThreadPoolConfig config_;

@@ -84,14 +84,21 @@ void ThreadPool::worker_thread(bool is_core) {
                 return ;
             }
         }
-        ///< 如果任务队列为空且stop_为true，则直接退出
+        // 如果任务队列为空且stop_为true，则直接退出
         if (stop_.load()&&tasks_.empty()) {
             return ;
         }
         auto task = tasks_.front();
         tasks_.pop();
         lock.unlock();
-        task();  // 执行任务
+        try {
+            task();  // 执行任务
+        }catch (const std::exception& e) {
+            std::cerr << "Task exception: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "Unknown task exception" << std::endl;
+        }
+
         queue_condition_.notify_one();
     }
 }
@@ -103,9 +110,9 @@ void ThreadPool::try_add_worker() {
 }
 
 
-bool ThreadPool::should_add_worker() {
+bool ThreadPool::should_add_worker() const {
     if (stop_.load()) return false;
-    if (active_thread_count_>=config_.max_threads_) return false;
+    if (active_thread_count_.load()>=config_.max_threads_) return false;
     {
         std::lock_guard<std::mutex> queue_lock(queue_mutex_);
         if (!tasks_.empty()) return true;
