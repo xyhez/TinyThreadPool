@@ -73,9 +73,9 @@ public:
      */
     template<class F, class... Args>
       auto submit_with_result(F&& f, Args&&... args)
-      -> std::future<decltype(f(args...))> {
-        using ReturnType = decltype(f(args...));
+        -> std::future<std::invoke_result_t<F, Args...>> {
 
+        using ReturnType = std::invoke_result_t<F, Args...>;
         // 将函数和参数打包成 shared_ptr<packaged_task>
         auto task = std::make_shared<std::packaged_task<ReturnType()>>(
             std::bind(std::forward<F>(f), std::forward<Args>(args)...)
