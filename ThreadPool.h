@@ -14,7 +14,7 @@ struct ThreadPoolConfig {
     size_t core_threads_;            // 核心线程数
     size_t max_threads_;             // 最大线程数
     std::chrono::seconds idle_timeout_;  // 空闲超时(秒)
-    size_t max_queue_size_;          // 队列最大长度(0=无线)
+    size_t max_queue_size_;          // 队列最大长度(0=无限)
 
     ThreadPoolConfig(size_t core_threads = 5, size_t max_threads = 10,
                      std::chrono::seconds idle_timeout = std::chrono::seconds(10),
@@ -46,21 +46,21 @@ public:
      */
     template<class T>
     void submitTask(T&& task) {
+        if (should_add_worker()) {
+            ///< 添加临时线程
+            try_add_worker();
+        }
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
             while(true) {
-                queue_condition_.wait(lock, [this](){
+                queue_condition_max.wait(lock, [this](){
                    return tasks_.size()<config_.max_queue_size_ || stop_;
                 });
                 break;
             }
             tasks_.emplace(std::forward<T>(task));
         }
-        if (should_add_worker()) {
-            ///< 添加临时线程
-            try_add_worker();
-        }
-        condition_.notify_one();
+        queue_condition_empty.notify_one();
     }
 
     /**
@@ -83,19 +83,24 @@ public:
 
         // 获取 future 用于返回结果
         std::future<ReturnType> future = task->get_future();
-
+        if (should_add_worker()) {
+            try_add_worker();
+        }
         // 加锁，将任务包装成 void() 放入队列
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
+            while(true) {
+                queue_condition_max.wait(lock, [this](){
+                   return tasks_.size()<config_.max_queue_size_ || stop_;
+                });
+                break;
+            }
             tasks_.emplace([task]() {
                 (*task)();
             });
         }
-        if (should_add_worker()) {
-            try_add_worker();
-        }
         // 通知一个工作线程
-        condition_.notify_one();
+        queue_condition_empty.notify_one();
         return future;
     }
 
@@ -135,7 +140,7 @@ public:
 
 private:
     /**
-     * @brief 工作线程函数
+     * @brief 工作线程函数-从任务队列中取出任务进行处理
      * @param is_core 区分核心/非核心线程
      */
     void worker_thread(bool is_core);
@@ -167,9 +172,9 @@ private:
     ///< 原语操作
     mutable std::mutex queue_mutex_;
     ///< 队列为空时阻塞工作线程，待有任务时唤醒工作
-    std::condition_variable condition_;
+    std::condition_variable queue_condition_empty;
     ///< 队列满时阻塞生产者
-    std::condition_variable queue_condition_;
+    std::condition_variable queue_condition_max;
 
     ///< 状态管理
     std::atomic<bool> stop_{false};

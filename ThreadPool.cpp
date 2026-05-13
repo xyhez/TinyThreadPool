@@ -18,18 +18,18 @@ ThreadPool::ThreadPool(size_t threads) : active_thread_count_(threads){
 ThreadPool::~ThreadPool() {
     if (!stop_.load()) {
         shutdown();
-
     }
-    std::cout<<"subthread exit"<<std::endl;
+    std::cout<<"subthread exit:"<<active_thread_count_<<std::endl;
 }
 
 void ThreadPool::shutdown() {
     stop_.store(true);
-    condition_.notify_all();
+    queue_condition_empty.notify_all();
     for (auto& t : threads_) {
         if (t.joinable()) {
             t.join();  // 等待线程执行完当前任务后退出
         }
+        active_thread_count_.fetch_sub(1);
     }
     threads_.clear();
 }
@@ -42,11 +42,12 @@ void ThreadPool::shutdown_now() {
         }
         stop_.store(true);
     }
-    condition_.notify_all();
+    queue_condition_empty.notify_all();
     for (auto& t : threads_) {
         if (t.joinable()) {
             t.join();  // join()方法会等待线程执行完任务后退出
         }
+        active_thread_count_.fetch_sub(1);
     }
     threads_.clear();
 }
@@ -72,11 +73,11 @@ void ThreadPool::worker_thread(bool is_core) {
     while (true) {
         std::unique_lock<std::mutex> lock(queue_mutex_);
         if (is_core) {
-            condition_.wait(lock,[this] {
+            queue_condition_empty.wait(lock,[this] {
                 return stop_.load() || !tasks_.empty();
             });
-        }else {  // is_core==false
-            bool has_task = condition_.wait_for(lock,config_.idle_timeout_,[this] {
+        }else {  // is_core==false---等待idle_timeout_(s)，没有任务则关闭临时线程。
+            bool has_task = queue_condition_empty.wait_for(lock,config_.idle_timeout_,[this] {
                 return stop_.load() || !tasks_.empty();
             });
             if (!has_task) {
@@ -99,7 +100,7 @@ void ThreadPool::worker_thread(bool is_core) {
             std::cerr << "Unknown task exception" << std::endl;
         }
 
-        queue_condition_.notify_one();
+        queue_condition_max.notify_one();
     }
 }
 
