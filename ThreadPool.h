@@ -6,6 +6,7 @@
 #include<queue>
 #include<iostream>
 #include<functional>
+#include <chrono>
 
 /**
  * @brief 线程池配置，先填写预期中的模式以及参数再启动线程池。
@@ -46,10 +47,11 @@ public:
      */
     template<class T>
     void submitTask(T&& task) {
-        if (should_add_worker()) {
-            ///< 添加临时线程
-            try_add_worker();
+        if (stop_.load()) {
+            return;
         }
+
+        try_add_worker();
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
             while(true) {
@@ -75,6 +77,9 @@ public:
       auto submit_with_result(F&& f, Args&&... args)
         -> std::future<std::invoke_result_t<F, Args...>> {
 
+        if (stop_.load()) {
+            return std::future<std::invoke_result_t<F, Args...>>();  // 空 future
+        }
         using ReturnType = std::invoke_result_t<F, Args...>;
         // 将函数和参数打包成 shared_ptr<packaged_task>
         auto task = std::make_shared<std::packaged_task<ReturnType()>>(
@@ -83,9 +88,8 @@ public:
 
         // 获取 future 用于返回结果
         std::future<ReturnType> future = task->get_future();
-        if (should_add_worker()) {
-            try_add_worker();
-        }
+
+        try_add_worker();
         // 加锁，将任务包装成 void() 放入队列
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
@@ -95,6 +99,7 @@ public:
                 });
                 break;
             }
+
             tasks_.emplace([task]() {
                 (*task)();
             });
@@ -151,11 +156,6 @@ private:
      */
     void try_add_worker();
 
-    /**
-     * @brief 判断是否需要增加线程
-     * @return
-     */
-    bool should_add_worker() const;
 private:
     ///< 配置
     ThreadPoolConfig config_;

@@ -15,7 +15,7 @@ using namespace std;
 
 
 int main() {
-    ThreadPoolConfig config(2, 20, chrono::seconds(20), 50);
+    ThreadPoolConfig config(0, 20, chrono::seconds(20), 50);
     ThreadPool pool(config);
     Base base;
 
@@ -24,10 +24,10 @@ int main() {
     // =============================================
 
     // for (int i = 0; i < 2; i++) {
-        // pool.submit_with_result(stressTest,std::ref(pool));
+    //     pool.submit_with_result(stressTest,std::ref(pool));
     // }
 
-    for (int i = 0; i < 100000; i++) {
+    for (int i = 0; i < 10000; i++) {
         pool.submitTask(task1_1);
         cout<<"----------------------当前活跃的线程数:"
         <<pool.active_thread()
