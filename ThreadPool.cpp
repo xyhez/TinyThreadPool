@@ -20,7 +20,6 @@ ThreadPool::~ThreadPool() {
     if (!stop_.load()) {
         shutdown();
     }
-    std::cout<<"subthread exit:"<<active_thread_count_<<std::endl;
 }
 
 void ThreadPool::shutdown() {
@@ -96,10 +95,10 @@ void ThreadPool::worker_thread(bool is_core) {
         lock.unlock();
         try {
             task();  // 执行任务
-        }catch (const std::exception& e) {
-            std::cerr << "Task exception: " << e.what() << std::endl;
+        }catch (const std::exception_ptr& e) {
+            m_error_handler(e);
         } catch (...) {
-            std::cerr << "Unknown task exception" << std::endl;
+            m_error_handler(std::current_exception());
         }
 
         queue_condition_max.notify_one();
@@ -112,6 +111,10 @@ void ThreadPool::try_add_worker() {
     if (tasks_.empty()) return;
     threads_.emplace_back(&ThreadPool::worker_thread, this, false);
     active_thread_count_.fetch_add(1);
+}
+
+void ThreadPool::set_error_handler(std::function<void(std::exception_ptr)> error_handler) {
+    m_error_handler = error_handler;
 }
 
 

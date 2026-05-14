@@ -12,11 +12,20 @@ using namespace std;
  * 5.仿函数
  */
 
-
+void error_handler(std::exception_ptr exceptionPtr){
+    try {
+        if (exceptionPtr) std::rethrow_exception(exceptionPtr);
+    } catch (const std::exception& e) {
+        cout<<"task failed: {}",e.what();
+    } catch (...) {
+        cout<<"task failed: unknown type";
+    }
+}
 
 int main() {
     ThreadPoolConfig config(0, 20, chrono::seconds(20), 50);
     ThreadPool pool(config);
+    pool.set_error_handler(error_handler);
     Base base;
 
     // =============================================

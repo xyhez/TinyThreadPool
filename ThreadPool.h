@@ -4,7 +4,6 @@
 #include<vector>
 #include<future>
 #include<queue>
-#include<iostream>
 #include<functional>
 #include <chrono>
 
@@ -50,16 +49,15 @@ public:
         if (stop_.load()) {
             return;
         }
-
+        // 检查是否需要添加临时(is_core==false)线程
         try_add_worker();
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
-            while(true) {
-                queue_condition_max.wait(lock, [this](){
-                   return tasks_.size()<config_.max_queue_size_ || stop_;
-                });
-                break;
-            }
+
+            queue_condition_max.wait(lock, [this](){
+               return tasks_.size()<config_.max_queue_size_ || stop_ || config_.max_queue_size_ == 0;
+            });
+
             tasks_.emplace(std::forward<T>(task));
         }
         queue_condition_empty.notify_one();
@@ -93,12 +91,10 @@ public:
         // 加锁，将任务包装成 void() 放入队列
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
-            while(true) {
-                queue_condition_max.wait(lock, [this](){
-                   return tasks_.size()<config_.max_queue_size_ || stop_;
-                });
-                break;
-            }
+
+            queue_condition_max.wait(lock, [this](){
+               return tasks_.size()<config_.max_queue_size_ || stop_|| config_.max_queue_size_ == 0;
+            });
 
             tasks_.emplace([task]() {
                 (*task)();
@@ -143,6 +139,12 @@ public:
      */
     bool is_shutdown() const;
 
+    /**
+     * @brief 设置异常处理的回调函数
+     * @param error_handler 异常处理回调函数
+     */
+    void set_error_handler(std::function<void(std::exception_ptr)> error_handler);
+
 private:
     /**
      * @brief 工作线程函数-从任务队列中取出任务进行处理
@@ -155,6 +157,8 @@ private:
      * @brief尝试增加线程
      */
     void try_add_worker();
+
+
 
 private:
     ///< 配置
@@ -178,4 +182,7 @@ private:
 
     ///< 状态管理
     std::atomic<bool> stop_{false};
+
+    // 发生异常后的回调函数
+    std::function<void(std::exception_ptr)> m_error_handler;
 };
