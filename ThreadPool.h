@@ -15,15 +15,21 @@ struct ThreadPoolConfig {
     size_t max_threads_;             // 最大线程数
     std::chrono::seconds idle_timeout_;  // 空闲超时(秒)
     size_t max_queue_size_;          // 队列最大长度(0=无限)
+    std::chrono::seconds destroy_timeout_;  // 析构超时(0=无限等待)
 
     ThreadPoolConfig(size_t core_threads = 5, size_t max_threads = 10,
                      std::chrono::seconds idle_timeout = std::chrono::seconds(10),
-                     size_t max_queue_size = 30)
+                     size_t max_queue_size = 30,
+                     std::chrono::seconds destroy_timeout = std::chrono::seconds(0))
                      : core_threads_(core_threads)
                      , max_threads_(max_threads)
                      , idle_timeout_(idle_timeout)
                      , max_queue_size_(max_queue_size)
+                     , destroy_timeout_(destroy_timeout)
                      {}
+
+    // 设置不同的等级的线程池配置。
+
 };
 
 class ThreadPool {
@@ -40,17 +46,17 @@ public:
     ~ThreadPool();
 
     /**
-     * @brief 提交任务，无返回值
+     * @brief 提交任务，无返回值---阻塞
      * @tparam T
      * @param task
      */
     template<class T>
-    void submitTask(T&& task) {
+    void SubmitTask(T&& task) {
         if (stop_.load()) {
             return;
         }
         // 检查是否需要添加临时(is_core==false)线程
-        try_add_worker();
+        TryAddWorker();
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
 
@@ -64,7 +70,32 @@ public:
     }
 
     /**
-     * @brief 提交任务，有返回值
+     * @brief 提交任务，无返回值---非阻塞
+     * @tparam T
+     * @param task
+     * @return
+     */
+    template<class T>
+    bool TrySubmit(T&& task) {
+        if (stop_.load()) {
+            return false;
+        }
+        // 检查是否需要添加临时(is_core==false)线程
+        TryAddWorker();
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            if (config_.max_queue_size_ > 0 && tasks_.size() >= config_.max_queue_size_) {
+                return false;
+            }
+
+            tasks_.emplace(std::forward<T>(task));
+        }
+        queue_condition_empty.notify_one();
+        return true;
+    }
+
+    /**
+     * @brief 提交任务，有返回值---阻塞
      * @tparam F
      * @tparam Args
      * @param f
@@ -72,11 +103,14 @@ public:
      * @return
      */
     template<class F, class... Args>
-      auto submit_with_result(F&& f, Args&&... args)
+      auto SubmitWithResult(F&& f, Args&&... args)
         -> std::future<std::invoke_result_t<F, Args...>> {
 
         if (stop_.load()) {
-            return std::future<std::invoke_result_t<F, Args...>>();  // 空 future
+            std::promise<std::invoke_result_t<F, Args...>> p;
+            p.set_exception(std::make_exception_ptr(
+                std::runtime_error("ThreadPool is shut down, task rejected")));
+            return p.get_future();
         }
         using ReturnType = std::invoke_result_t<F, Args...>;
         // 将函数和参数打包成 shared_ptr<packaged_task>
@@ -86,8 +120,8 @@ public:
 
         // 获取 future 用于返回结果
         std::future<ReturnType> future = task->get_future();
-
-        try_add_worker();
+        // 查看是否需要添加临时线程
+        TryAddWorker();
         // 加锁，将任务包装成 void() 放入队列
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
@@ -105,58 +139,105 @@ public:
         return future;
     }
 
+
+    /**
+     * @brief 提交任务，有返回值---非阻塞
+     * @tparam F
+     * @tparam Args
+     * @param f
+     * @param args
+     * @return
+     */
+    template<class F, class... Args>
+    auto TrySubmitWithResult(F&& f, Args&&... args)
+    -> std::future<std::invoke_result_t<F,Args...>> {
+        if (stop_.load()) {
+            std::promise<std::invoke_result_t<F, Args...>> p;
+            p.set_exception(std::make_exception_ptr(
+                std::runtime_error("ThreadPool is shut down, task rejected.")));
+            return p.get_future();
+        }
+        using ReturnType = std::invoke_result_t<F, Args...>;
+        // 将函数和参数打包成 shared_ptr<packaged_task>
+        auto task = std::make_shared<std::packaged_task<ReturnType()>>(
+            std::bind(std::forward<F>(f), std::forward<Args>(args)...)
+        );
+
+        // 获取 future 用于返回结果
+        std::future<ReturnType> future = task->get_future();
+
+        TryAddWorker();
+        // 加锁，将任务包装成 void() 放入队列
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            if (config_.max_queue_size_ > 0 && tasks_.size() >= config_.max_queue_size_) {
+                std::promise<std::invoke_result_t<F, Args...>> p;
+                p.set_exception(std::make_exception_ptr(
+                    std::runtime_error("tasks is full,please retry.")));
+                return p.get_future();
+            }
+
+            tasks_.emplace([task]() {
+                (*task)();
+            });
+        }
+        // 通知一个工作线程
+        queue_condition_empty.notify_one();
+        return future;
+    }
+
     /**
      * @brief 优雅的关闭，等待任务完成
      */
-    void shutdown();
+    void Shutdown();
 
     /**
      * @brief 立即关闭，放弃未执行的任务
      */
-    void shutdown_now();
+    void ShutdownNow();
 
     /**
      * @brief 当前活跃的线程数
      * @return
      */
-    size_t active_thread() const;
+    size_t ActiveThread() const;
 
     /**
      * @brief 最大线程数
      * @return
      */
-    size_t max_thread_count() const;
+    size_t MaxThreadCount() const;
 
     /**
      * @brief 待执行任务数
      * @return
      */
-    size_t pendingTasks() const;
+    size_t PendingTasks() const;
 
     /**
      * @brief 线程池是否已经关闭
      * @return
      */
-    bool is_shutdown() const;
+    bool IsShutdown() const;
 
     /**
      * @brief 设置异常处理的回调函数
      * @param error_handler 异常处理回调函数
      */
-    void set_error_handler(std::function<void(std::exception_ptr)> error_handler);
+    void SetErrorHandler(std::function<void(std::exception_ptr)> error_handler);
 
 private:
     /**
      * @brief 工作线程函数-从任务队列中取出任务进行处理
      * @param is_core 区分核心/非核心线程
      */
-    void worker_thread(bool is_core);
+    void WorkerThread(bool is_core);
 
     // 动态扩缩容
     /**
      * @brief尝试增加线程
      */
-    void try_add_worker();
+    void TryAddWorker();
 
 
 

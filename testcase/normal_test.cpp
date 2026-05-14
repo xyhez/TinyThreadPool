@@ -25,7 +25,7 @@ void error_handler(std::exception_ptr exceptionPtr){
 int main() {
     ThreadPoolConfig config(0, 20, chrono::seconds(20), 50);
     ThreadPool pool(config);
-    pool.set_error_handler(error_handler);
+    pool.SetErrorHandler(error_handler);
     Base base;
 
     // =============================================
@@ -33,13 +33,13 @@ int main() {
     // =============================================
 
     // for (int i = 0; i < 2; i++) {
-    //     pool.submit_with_result(stressTest,std::ref(pool));
+    //     pool.SubmitWithResult(stressTest,std::ref(pool));
     // }
 
     for (int i = 0; i < 10000; i++) {
-        pool.submitTask(task1_1);
+        pool.SubmitTask(task1_1);
         cout<<"----------------------当前活跃的线程数:"
-        <<pool.active_thread()
+        <<pool.ActiveThread()
         <<"----------------------"
         <<endl;
     }
@@ -50,18 +50,18 @@ int main() {
     // =============================================
 
     // 无参-无返回值 (submitTask)
-    pool.submitTask(task1_1);
+    pool.SubmitTask(task1_1);
     cout<<"----------------------当前活跃的线程数:"
-    <<pool.active_thread()
+    <<pool.ActiveThread()
     <<"----------------------"
     <<endl;
 
     // 有参-有返回值 (submit_with_result)
-    auto future = pool.submit_with_result(task1_2, 1);
+    auto future = pool.SubmitWithResult(task1_2, 1);
     int result = future.get();
     cout<<result<<endl;
     cout<<"----------------------当前活跃的线程数:"
-    <<pool.active_thread()
+    <<pool.ActiveThread()
     <<"----------------------"
     <<endl;
 
@@ -70,25 +70,25 @@ int main() {
     // =============================================
 
     // 传指针
-    auto fut = pool.submit_with_result(&Base::task2_2, &base, 10);
+    auto fut = pool.SubmitWithResult(&Base::task2_2, &base, 10);
     result = fut.get();
     cout<<"class member via ptr:"<<result<<endl;
     cout<<"----------------------当前活跃的线程数:"
-    <<pool.active_thread()
+    <<pool.ActiveThread()
     <<"----------------------"
     <<endl;
 
     // 传 reference_wrapper
-    fut = pool.submit_with_result(&Base::task2_2, std::ref(base), 20);
+    fut = pool.SubmitWithResult(&Base::task2_2, std::ref(base), 20);
     result = fut.get();
     cout<<"class member via ref:"<<result<<endl;
     cout<<"----------------------当前活跃的线程数:"
-    <<pool.active_thread()
+    <<pool.ActiveThread()
     <<"----------------------"
     <<endl;
 
     // void 成员函数 + submit_with_result -> future<void>
-    auto fut_void = pool.submit_with_result(&Base::task2_1, &base);
+    auto fut_void = pool.SubmitWithResult(&Base::task2_1, &base);
     fut_void.get();
 
     // =============================================
@@ -96,12 +96,12 @@ int main() {
     // =============================================
 
     // 无返回值 (submitTask)
-    pool.submitTask([] {
+    pool.SubmitTask([] {
         cout<<"lambda, no return"<<endl;
     });
 
     // 有返回值 (submit_with_result)
-    fut = pool.submit_with_result([](int x, int y) -> int {
+    fut = pool.SubmitWithResult([](int x, int y) -> int {
         cout<<"lambda, has return"<<endl;
         return x * y;
     }, 3, 5);
@@ -110,7 +110,7 @@ int main() {
 
     // 带捕获的 lambda
     int captured = 100;
-    fut = pool.submit_with_result([&captured](int x) -> int {
+    fut = pool.SubmitWithResult([&captured](int x) -> int {
         return captured + x;
     }, 7);
     result = fut.get();
@@ -122,19 +122,19 @@ int main() {
 
     // 包装普通函数 -> submitTask
     std::function<void()> func = task1_1;
-    pool.submitTask(func);
+    pool.SubmitTask(func);
 
     // 包装 lambda -> submit_with_result
     std::function<int(int, int)> fn_add = [](int a, int b) -> int {
         return a + b;
     };
-    fut = pool.submit_with_result(fn_add, 8, 2);
+    fut = pool.SubmitWithResult(fn_add, 8, 2);
     result = fut.get();
     cout<<"std::function return:"<<result<<endl;
 
     // 包装成员函数 (bind)
     std::function<int(int)> fn_member = std::bind(&Base::task2_2, &base, std::placeholders::_1);
-    fut = pool.submit_with_result(fn_member, 30);
+    fut = pool.SubmitWithResult(fn_member, 30);
     result = fut.get();
     cout<<"std::function bind member:"<<result<<endl;
 
@@ -143,12 +143,12 @@ int main() {
     // =============================================
 
     // 匿名对象
-    future = pool.submit_with_result(Base{}, 10, 20);
+    future = pool.SubmitWithResult(Base{}, 10, 20);
     result = future.get();
     cout<<"functor temp:"<<result<<endl;
 
     // 已存在的对象
-    fut = pool.submit_with_result(base, 40, 50);
+    fut = pool.SubmitWithResult(base, 40, 50);
     result = fut.get();
     cout<<"functor obj:"<<result<<endl;
 
@@ -156,7 +156,7 @@ int main() {
     // 6. 异常处理
     // =============================================
 
-    auto fut_ex = pool.submit_with_result([](int x) -> int {
+    auto fut_ex = pool.SubmitWithResult([](int x) -> int {
         if (x < 0)
             throw std::runtime_error("negative value");
         return x * 2;
@@ -174,7 +174,7 @@ int main() {
 
     std::vector<std::future<int>> futs;
     for (int i = 0; i < 5; ++i) {
-        futs.push_back(pool.submit_with_result(task1_2, i));
+        futs.push_back(pool.SubmitWithResult(task1_2, i));
     }
     cout<<"concurrent results: ";
     for (auto& f : futs) {
@@ -185,15 +185,15 @@ int main() {
 */
     // std::this_thread::sleep_for(std::chrono::seconds(11));
     // cout<<"----------------------progress active_threads:"
-    // <<pool.active_thread()
+    // <<pool.ActiveThread()
     // <<"----------------------"
     // <<endl;
     //
 
-    pool.shutdown();
+    pool.Shutdown();
     // std::this_thread::sleep_for(std::chrono::seconds(5));
     cout<<"----------------------active_threads:"
-    <<pool.active_thread()
+    <<pool.ActiveThread()
     <<"----------------------"
     <<endl;
     return 0;

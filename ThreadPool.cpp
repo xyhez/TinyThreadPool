@@ -3,7 +3,7 @@
 ThreadPool::ThreadPool(const ThreadPoolConfig& config) :config_(config), active_thread_count_(config_.core_threads_) {
     // 启动线程池初始化---先创建5个核心线程。
     for (int i = 0; i < config_.core_threads_; ++i) {
-        threads_.emplace_back(std::thread(&ThreadPool::worker_thread, this, true));
+        threads_.emplace_back(std::thread(&ThreadPool::WorkerThread, this, true));
     }
 
 }
@@ -12,17 +12,41 @@ ThreadPool::ThreadPool(size_t threads) : active_thread_count_(threads){
     config_.max_threads_ = threads;
     config_.core_threads_ = threads;
     for (int i = 0; i < config_.max_threads_; ++i) {
-        threads_.emplace_back(std::thread(&ThreadPool::worker_thread, this, true));
+        threads_.emplace_back(std::thread(&ThreadPool::WorkerThread, this, true));
     }
 }
 
 ThreadPool::~ThreadPool() {
-    if (!stop_.load()) {
-        shutdown();
+    if (stop_.load()) {
+        return;
+    }
+    if (config_.destroy_timeout_.count() == 0) {
+        ShutdownNow();
+    } else {
+        auto future = std::async(std::launch::async, [this]() {
+            ShutdownNow();
+        });
+        if (future.wait_for(config_.destroy_timeout_) == std::future_status::timeout) {
+            {
+                std::lock_guard<std::mutex> lock(queue_mutex_);
+                while (!tasks_.empty()) {
+                    tasks_.pop();
+                }
+                stop_.store(true);
+            }
+            queue_condition_empty.notify_all();
+            queue_condition_max.notify_all();
+            for (auto& t : threads_) {
+                if (t.joinable()) {
+                    t.detach();
+                }
+            }
+            threads_.clear();
+        }
     }
 }
 
-void ThreadPool::shutdown() {
+void ThreadPool::Shutdown() {
     stop_.store(true);
     queue_condition_empty.notify_all();
     queue_condition_max.notify_all();
@@ -35,7 +59,7 @@ void ThreadPool::shutdown() {
     threads_.clear();
 }
 
-void ThreadPool::shutdown_now() {
+void ThreadPool::ShutdownNow() {
     {
         std::lock_guard<std::mutex> queue_lock(queue_mutex_);
         while (!tasks_.empty()) {
@@ -54,24 +78,24 @@ void ThreadPool::shutdown_now() {
     threads_.clear();
 }
 
-size_t ThreadPool::active_thread() const {
+size_t ThreadPool::ActiveThread() const {
     return active_thread_count_.load();
 }
 
-size_t ThreadPool::max_thread_count() const {
+size_t ThreadPool::MaxThreadCount() const {
     return config_.max_threads_;
 }
 
-size_t ThreadPool::pendingTasks() const {
+size_t ThreadPool::PendingTasks() const {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     return tasks_.size();
 }
 
-bool ThreadPool::is_shutdown() const {
+bool ThreadPool::IsShutdown() const {
     return stop_.load();
 }
 
-void ThreadPool::worker_thread(bool is_core) {
+void ThreadPool::WorkerThread(bool is_core) {
     while (true) {
         std::unique_lock<std::mutex> lock(queue_mutex_);
         if (is_core) {
@@ -105,15 +129,15 @@ void ThreadPool::worker_thread(bool is_core) {
     }
 }
 
-void ThreadPool::try_add_worker() {
+void ThreadPool::TryAddWorker() {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     if (active_thread_count_.load()>=config_.max_threads_) return;
     if (tasks_.empty()) return;
-    threads_.emplace_back(&ThreadPool::worker_thread, this, false);
+    threads_.emplace_back(&ThreadPool::WorkerThread, this, false);
     active_thread_count_.fetch_add(1);
 }
 
-void ThreadPool::set_error_handler(std::function<void(std::exception_ptr)> error_handler) {
+void ThreadPool::SetErrorHandler(std::function<void(std::exception_ptr)> error_handler) {
     m_error_handler = error_handler;
 }
 

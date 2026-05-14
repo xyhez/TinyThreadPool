@@ -78,7 +78,7 @@ BenchmarkCase run_future_cpu_case(const PressureConfig& pressure) {
     const auto begin = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < pressure.future_tasks; ++i) {
         futures.emplace_back(
-            pool.submit_with_result(cpu_work, pressure.future_iterations, i + 1));
+            pool.SubmitWithResult(cpu_work, pressure.future_iterations, i + 1));
     }
     const auto submitted = std::chrono::steady_clock::now();
 
@@ -88,7 +88,7 @@ BenchmarkCase run_future_cpu_case(const PressureConfig& pressure) {
     }
     const auto finished = std::chrono::steady_clock::now();
 
-    pool.shutdown();
+    pool.Shutdown();
 
     result.submit_ms = elapsed_ms(begin, submitted);
     result.total_ms = elapsed_ms(begin, finished);
@@ -112,7 +112,7 @@ BenchmarkCase run_fire_and_forget_case(const PressureConfig& pressure) {
 
     const auto begin = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < pressure.fire_and_forget_tasks; ++i) {
-        pool.submitTask([&, i]() {
+        pool.SubmitTask([&, i]() {
             checksum.fetch_xor(cpu_work(pressure.fire_and_forget_iterations, i + 1),
                                std::memory_order_relaxed);
             if (completed.fetch_add(1, std::memory_order_acq_rel) + 1 ==
@@ -132,7 +132,7 @@ BenchmarkCase run_fire_and_forget_case(const PressureConfig& pressure) {
     }
     const auto finished = std::chrono::steady_clock::now();
 
-    pool.shutdown();
+    pool.Shutdown();
 
     result.submit_ms = elapsed_ms(begin, submitted);
     result.total_ms = elapsed_ms(begin, finished);
@@ -156,7 +156,7 @@ BenchmarkCase run_backpressure_case(const PressureConfig& pressure) {
 
     const auto begin = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < pressure.backpressure_tasks; ++i) {
-        pool.submitTask([&]() {
+        pool.SubmitTask([&]() {
             std::this_thread::sleep_for(
                 std::chrono::milliseconds(pressure.backpressure_sleep_ms));
             if (completed.fetch_add(1, std::memory_order_acq_rel) + 1 ==
@@ -176,7 +176,7 @@ BenchmarkCase run_backpressure_case(const PressureConfig& pressure) {
     }
     const auto finished = std::chrono::steady_clock::now();
 
-    pool.shutdown();
+    pool.Shutdown();
 
     result.submit_ms = elapsed_ms(begin, submitted);
     result.total_ms = elapsed_ms(begin, finished);
@@ -196,7 +196,7 @@ BenchmarkCase run_future_exception_case() {
     ThreadPool pool(config);
 
     const auto begin = std::chrono::steady_clock::now();
-    auto future = pool.submit_with_result([]() -> int {
+    auto future = pool.SubmitWithResult([]() -> int {
         throw std::runtime_error("intentional pressure-test exception");
     });
     const auto submitted = std::chrono::steady_clock::now();
@@ -209,7 +209,7 @@ BenchmarkCase run_future_exception_case() {
     }
     const auto finished = std::chrono::steady_clock::now();
 
-    pool.shutdown();
+    pool.Shutdown();
 
     result.submit_ms = elapsed_ms(begin, submitted);
     result.total_ms = elapsed_ms(begin, finished);

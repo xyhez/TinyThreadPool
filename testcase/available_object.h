@@ -44,9 +44,9 @@ public:
 
 int stressTest(ThreadPool& pool) {
     for (int i = 0; i < 10000; i++) {
-        pool.submitTask(task1_1);
+        pool.SubmitTask(task1_1);
         cout<<"----------------------当前活跃的线程数:"
-        <<pool.active_thread()
+        <<pool.ActiveThread()
         <<"----------------------"
         <<endl;
     }
