@@ -138,7 +138,7 @@ void ThreadPool::WorkerThread(bool is_core) {
         } catch (...) {
             m_error_handler(std::current_exception());
         }
-
+        tasks_completed_.fetch_add(1, std::memory_order_relaxed);
         queue_condition_max.notify_one();
     }
 }
@@ -174,5 +174,12 @@ void ThreadPool::SetCurrentThreadName(const std::string &name) {
 #endif
 }
 
+size_t ThreadPool::TasksSubmitted() const {
+    return tasks_submitted_.load();
+}
+
+size_t ThreadPool::TasksCompleted() const {
+    return tasks_completed_.load();
+}
 
 

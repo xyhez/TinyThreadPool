@@ -67,6 +67,7 @@ public:
             });
 
             tasks_.emplace(std::forward<T>(task));
+            tasks_submitted_.fetch_add(1, std::memory_order_relaxed);
         }
         queue_condition_empty.notify_one();
     }
@@ -91,6 +92,7 @@ public:
             }
 
             tasks_.emplace(std::forward<T>(task));
+            tasks_submitted_.fetch_add(1, std::memory_order_relaxed);
         }
         queue_condition_empty.notify_one();
         return true;
@@ -135,6 +137,7 @@ public:
             tasks_.emplace([task]() {
                 (*task)();
             });
+            tasks_submitted_.fetch_add(1, std::memory_order_relaxed);
         }
         // 通知一个工作线程
         queue_condition_empty.notify_one();
@@ -182,6 +185,7 @@ public:
             tasks_.emplace([task]() {
                 (*task)();
             });
+            tasks_submitted_.fetch_add(1, std::memory_order_relaxed);
         }
         // 通知一个工作线程
         queue_condition_empty.notify_one();
@@ -228,6 +232,18 @@ public:
      */
     void SetErrorHandler(std::function<void(std::exception_ptr)> error_handler);
 
+    /**
+     *
+     * @return 已提交的任务数量
+     */
+    size_t TasksSubmitted() const;
+
+    /**
+     *
+     * @return 已完成的任务数量
+     */
+    size_t TasksCompleted() const;
+
 private:
     /**
      * @brief 工作线程函数-从任务队列中取出任务进行处理
@@ -262,6 +278,10 @@ private:
 
     ///< 任务队列
     std::queue<std::function<void()>> tasks_; // 接受无参数无返回值的函数指针
+    ///< 记录提交任务数
+    std::atomic<size_t> tasks_submitted_{0};
+    ///< 记录完成任务数
+    std::atomic<size_t> tasks_completed_{0};
 
 
     ///< 原语操作

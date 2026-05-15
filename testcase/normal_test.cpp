@@ -38,10 +38,10 @@ int main() {
 
     for (int i = 0; i < 10000; i++) {
         pool.SubmitTask(task1_1);
-        cout<<"----------------------当前活跃的线程数:"
-        <<pool.ActiveThread()
-        <<"----------------------"
-        <<endl;
+        // cout<<"----------------------当前活跃的线程数:"
+        // <<pool.ActiveThread()
+        // <<"----------------------"
+        // <<endl;
     }
 
 /*
@@ -194,6 +194,16 @@ int main() {
     // std::this_thread::sleep_for(std::chrono::seconds(5));
     cout<<"----------------------active_threads:"
     <<pool.ActiveThread()
+    <<"----------------------"
+    <<endl;
+
+    cout<<"----------------------tasks_submitted:"
+    <<pool.TasksCompleted()
+    <<"----------------------"
+    <<endl;
+
+    cout<<"----------------------tasks_completed:"
+    <<pool.TasksCompleted()
     <<"----------------------"
     <<endl;
     return 0;
