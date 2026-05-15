@@ -1,5 +1,14 @@
 #include "ThreadPool.h"
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#elif defined(__linux__)
+#include <pthread.h>
+#endif
+
 ThreadPool::ThreadPool(const ThreadPoolConfig& config) :config_(config), active_thread_count_(config_.core_threads_) {
     // 启动线程池初始化---先创建5个核心线程。
     for (int i = 0; i < config_.core_threads_; ++i) {
@@ -96,6 +105,11 @@ bool ThreadPool::IsShutdown() const {
 }
 
 void ThreadPool::WorkerThread(bool is_core) {
+    std::string name = config_.thread_name_prefix;
+    name += is_core ? "_core_" : "_tmp_";
+    name += std::to_string(thread_id_counter_.fetch_add(1, std::memory_order_relaxed));
+    SetCurrentThreadName(name);
+
     while (true) {
         std::unique_lock<std::mutex> lock(queue_mutex_);
         if (is_core) {
@@ -139,6 +153,25 @@ void ThreadPool::TryAddWorker() {
 
 void ThreadPool::SetErrorHandler(std::function<void(std::exception_ptr)> error_handler) {
     m_error_handler = error_handler;
+}
+
+void ThreadPool::SetCurrentThreadName(const std::string &name) {
+#ifdef _WIN32
+    using SetThreadDesc_t = HRESULT (WINAPI *)(HANDLE, PCWSTR);
+    static SetThreadDesc_t pSetThreadDesc = []() -> SetThreadDesc_t {
+        HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+        return reinterpret_cast<SetThreadDesc_t>(
+            GetProcAddress(kernel32, "SetThreadDescription"));
+    }();
+    if (!pSetThreadDesc) return;
+
+    int len = MultiByteToWideChar(CP_UTF8, 0, name.c_str(), -1, nullptr, 0);
+    std::wstring wname(len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, name.c_str(), -1, &wname[0], len);
+    pSetThreadDesc(GetCurrentThread(), wname.c_str());
+#elif defined(__linux__)
+    pthread_setname_np(pthread_self(), name.substr(0, 15).c_str());
+#endif
 }
 
 

@@ -5,7 +5,8 @@
 #include<future>
 #include<queue>
 #include<functional>
-#include <chrono>
+#include<chrono>
+#include<string>
 
 /**
  * @brief 线程池配置，先填写预期中的模式以及参数再启动线程池。
@@ -16,6 +17,7 @@ struct ThreadPoolConfig {
     std::chrono::seconds idle_timeout_;  // 空闲超时(秒)
     size_t max_queue_size_;          // 队列最大长度(0=无限)
     std::chrono::seconds destroy_timeout_;  // 析构超时(0=无限等待)
+    std::string thread_name_prefix = "TP";  // 线程名前缀
 
     ThreadPoolConfig(size_t core_threads = 5, size_t max_threads = 10,
                      std::chrono::seconds idle_timeout = std::chrono::seconds(10),
@@ -235,9 +237,15 @@ private:
 
     // 动态扩缩容
     /**
-     * @brief尝试增加线程
+     * @brief 尝试增加临时线程
      */
     void TryAddWorker();
+
+    /**
+     * @brief 线程命名，对于Windows和Linux系统有不同的实现
+     * @param name
+     */
+    static void SetCurrentThreadName(const std::string& name);
 
 
 
@@ -249,6 +257,8 @@ private:
     std::vector<std::thread> threads_;
     ///< 当前线程数
     std::atomic<size_t> active_thread_count_;
+    ///< 线程ID计数器，每次新增线程时
+    std::atomic<size_t> thread_id_counter_{0};
 
     ///< 任务队列
     std::queue<std::function<void()>> tasks_; // 接受无参数无返回值的函数指针
