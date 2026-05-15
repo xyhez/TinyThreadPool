@@ -135,8 +135,10 @@ void ThreadPool::WorkerThread(bool is_core) {
             task();  // 执行任务
         }catch (const std::exception_ptr& e) {
             m_error_handler(e);
+            tasks_failed_.fetch_add(1, std::memory_order_relaxed);
         } catch (...) {
             m_error_handler(std::current_exception());
+            tasks_failed_.fetch_add(1, std::memory_order_relaxed);
         }
         tasks_completed_.fetch_add(1, std::memory_order_relaxed);
         queue_condition_max.notify_one();
@@ -182,4 +184,11 @@ size_t ThreadPool::TasksCompleted() const {
     return tasks_completed_.load();
 }
 
+size_t ThreadPool::TasksFailed() const {
+    return tasks_failed_.load();
+}
+
+size_t ThreadPool::TasksRejected() const {
+    return task_rejected_.load();
+}
 

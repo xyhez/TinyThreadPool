@@ -293,6 +293,151 @@ static void test_try_submit_queue_full() {
     pool.ShutdownNow();
 }
 
+// =============================================================================
+// (g) 统计计数器 — TasksSubmitted / TasksCompleted / PendingTasks
+// =============================================================================
+static void test_statistics_counters() {
+    std::cout << "\n[Test] (g) statistics counters\n";
+
+    ThreadPoolConfig config(4, 8, std::chrono::seconds(10), 0);
+    ThreadPool pool(config);
+
+    constexpr int tasks = 3000;
+    std::atomic<int> counter{0};
+
+    for (int i = 0; i < tasks; ++i) {
+        pool.SubmitTask([&counter]() {
+            counter.fetch_add(1, std::memory_order_relaxed);
+        });
+    }
+
+    // 提交后立即检查 TasksSubmitted
+    size_t submitted = pool.TasksSubmitted();
+    check(submitted == static_cast<size_t>(tasks),
+          "TasksSubmitted=" + std::to_string(submitted) + " matches submitted count " + std::to_string(tasks));
+
+    // 等待所有任务执行完
+    while (pool.PendingTasks() > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    pool.Shutdown();
+
+    size_t completed = pool.TasksCompleted();
+    check(completed == static_cast<size_t>(tasks),
+          "TasksCompleted=" + std::to_string(completed) + " matches expected " + std::to_string(tasks));
+    check(pool.PendingTasks() == 0, "PendingTasks=0 after all tasks done");
+    check(pool.TasksFailed() == 0, "TasksFailed=0, no exceptions thrown");
+    check(pool.TasksRejected() == 0, "TasksRejected=0, no rejections");
+}
+
+// =============================================================================
+// (h) 错误 & 拒绝计数器 — TasksFailed / TasksRejected
+// =============================================================================
+static void test_error_rejection_counters() {
+    std::cout << "\n[Test] (h) error & rejection counters\n";
+
+    // ---- 1) TasksFailed: 任务抛出异常应记入 failed ----------
+    {
+        ThreadPoolConfig config(2, 2, std::chrono::seconds(5), 0);
+        ThreadPool pool(config);
+        pool.SetErrorHandler([](std::exception_ptr) {});  // 忽略异常输出
+
+        constexpr int good_tasks = 100;
+        constexpr int bad_tasks = 10;
+        std::atomic<int> good_counter{0};
+        std::atomic<int> bad_counter{0};
+
+        for (int i = 0; i < bad_tasks; ++i) {
+            pool.SubmitTask([&bad_counter]() {
+                bad_counter.fetch_add(1, std::memory_order_relaxed);
+                throw std::runtime_error("intentional test failure");
+            });
+        }
+        for (int i = 0; i < good_tasks; ++i) {
+            pool.SubmitTask([&good_counter]() {
+                good_counter.fetch_add(1, std::memory_order_relaxed);
+            });
+        }
+
+        while (pool.PendingTasks() > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        pool.Shutdown();
+
+        check(pool.TasksSubmitted() == static_cast<size_t>(good_tasks + bad_tasks),
+              "TasksSubmitted=" + std::to_string(good_tasks + bad_tasks));
+        check(pool.TasksFailed() == static_cast<size_t>(bad_tasks),
+              "TasksFailed=" + std::to_string(bad_tasks) + " (all bad tasks threw)");
+        // TasksCompleted 统计执行完毕的任务（无论成功/失败都计数）
+        check(pool.TasksCompleted() == static_cast<size_t>(good_tasks + bad_tasks),
+              "TasksCompleted counts all executed tasks (good + bad)");
+    }
+
+    // ---- 2) TasksRejected: 关闭后提交被拒 ----------
+    {
+        ThreadPoolConfig config(2, 2, std::chrono::seconds(5), 8);
+        ThreadPool pool(config);
+        pool.Shutdown();
+
+        // SubmitTask 关闭后被拒
+        pool.SubmitTask([]() {});
+        // TrySubmit 关闭后被拒
+        pool.TrySubmit([]() {});
+        // SubmitWithResult 关闭后被拒
+        pool.SubmitWithResult([]() { return 1; });
+        // TrySubmitWithResult 关闭后被拒
+        pool.TrySubmitWithResult([]() { return 2; });
+
+        check(pool.TasksRejected() == 4,
+              "TasksRejected=4 (4 submissions after shutdown)");
+    }
+
+    // ---- 3) TasksRejected: TrySubmit 队列满被拒 ----------
+    {
+        ThreadPoolConfig config(2, 2, std::chrono::seconds(10), 2);
+        ThreadPool pool(config);
+
+        // 用 mutex 阻塞工作线程，避免竞态
+        std::mutex block_mutex;
+        block_mutex.lock();
+        for (int i = 0; i < 2; ++i) {
+            pool.SubmitTask([&block_mutex]() {
+                std::lock_guard<std::mutex> lock(block_mutex);
+            });
+        }
+        // 等待工作线程取走阻塞任务
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        // 填满队列 (size=2)
+        bool ok1 = pool.TrySubmit([]() {});
+        bool ok2 = pool.TrySubmit([]() {});
+        check(ok1 && ok2, "queue filled (TrySubmit 1&2 accepted)");
+
+        // 队列满，TrySubmit 应被拒
+        size_t rejected_before = pool.TasksRejected();
+        bool rejected = !pool.TrySubmit([]() {});
+        check(rejected, "TrySubmit rejected when queue full");
+        check(pool.TasksRejected() == rejected_before + 1,
+              "TasksRejected incremented by queue-full TrySubmit");
+
+        // TrySubmitWithResult 队列满被拒
+        size_t rejected_before2 = pool.TasksRejected();
+        auto fut = pool.TrySubmitWithResult([]() { return 42; });
+        bool caught = false;
+        try {
+            fut.get();
+        } catch (const std::runtime_error&) {
+            caught = true;
+        }
+        check(caught, "TrySubmitWithResult future carries exception when queue full");
+        check(pool.TasksRejected() == rejected_before2 + 1,
+              "TasksRejected incremented by queue-full TrySubmitWithResult");
+
+        block_mutex.unlock();
+        pool.ShutdownNow();
+    }
+}
+
 int main() {
     std::cout << "=== ThreadPool Edge Test Suite ===\n";
 
@@ -303,6 +448,8 @@ int main() {
     test_submit_rejected_after_shutdown();
     test_unbounded_queue_regression();
     test_try_submit_queue_full();
+    test_statistics_counters();
+    test_error_rejection_counters();
 
     std::cout << "\n=== Results: " << g_passed << " passed, " << g_failed << " failed ===\n";
     return g_failed == 0 ? 0 : 1;

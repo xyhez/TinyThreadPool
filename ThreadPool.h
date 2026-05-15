@@ -55,6 +55,7 @@ public:
     template<class T>
     void SubmitTask(T&& task) {
         if (stop_.load()) {
+            task_rejected_.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         // 检查是否需要添加临时(is_core==false)线程
@@ -81,6 +82,7 @@ public:
     template<class T>
     bool TrySubmit(T&& task) {
         if (stop_.load()) {
+            task_rejected_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
         // 检查是否需要添加临时(is_core==false)线程
@@ -88,6 +90,7 @@ public:
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
             if (config_.max_queue_size_ > 0 && tasks_.size() >= config_.max_queue_size_) {
+                task_rejected_.fetch_add(1, std::memory_order_relaxed);
                 return false;
             }
 
@@ -111,6 +114,7 @@ public:
         -> std::future<std::invoke_result_t<F, Args...>> {
 
         if (stop_.load()) {
+            task_rejected_.fetch_add(1, std::memory_order_relaxed);
             std::promise<std::invoke_result_t<F, Args...>> p;
             p.set_exception(std::make_exception_ptr(
                 std::runtime_error("ThreadPool is shut down, task rejected")));
@@ -157,6 +161,7 @@ public:
     auto TrySubmitWithResult(F&& f, Args&&... args)
     -> std::future<std::invoke_result_t<F,Args...>> {
         if (stop_.load()) {
+            task_rejected_.fetch_add(1, std::memory_order_relaxed);
             std::promise<std::invoke_result_t<F, Args...>> p;
             p.set_exception(std::make_exception_ptr(
                 std::runtime_error("ThreadPool is shut down, task rejected.")));
@@ -176,6 +181,7 @@ public:
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
             if (config_.max_queue_size_ > 0 && tasks_.size() >= config_.max_queue_size_) {
+                task_rejected_.fetch_add(1, std::memory_order_relaxed);
                 std::promise<std::invoke_result_t<F, Args...>> p;
                 p.set_exception(std::make_exception_ptr(
                     std::runtime_error("tasks is full,please retry.")));
@@ -244,6 +250,18 @@ public:
      */
     size_t TasksCompleted() const;
 
+    /**
+     *
+     * @return 执行失败的任务数量
+     */
+    size_t TasksFailed() const;
+
+    /**
+     *
+     * @return 被拒绝的任务数量
+     */
+    size_t TasksRejected() const;
+
 private:
     /**
      * @brief 工作线程函数-从任务队列中取出任务进行处理
@@ -282,6 +300,10 @@ private:
     std::atomic<size_t> tasks_submitted_{0};
     ///< 记录完成任务数
     std::atomic<size_t> tasks_completed_{0};
+    ///< 记录错误任务数
+    std::atomic<size_t> tasks_failed_{0};
+    ///< 记录拒绝任务数
+    std::atomic<size_t> task_rejected_{0};
 
 
     ///< 原语操作
