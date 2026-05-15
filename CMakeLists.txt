@@ -14,3 +14,6 @@ target_link_libraries(normal_test PRIVATE ThreadPool)
 
 add_executable(stress_test testcase/stress_test.cpp)
 target_link_libraries(stress_test PRIVATE ThreadPool)
+
+add_executable(edge_test testcase/edge_test.cpp)
+target_link_libraries(edge_test PRIVATE ThreadPool)
